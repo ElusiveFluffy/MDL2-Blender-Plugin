@@ -510,6 +510,8 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
         print('Empty String')
         return None
     textureFound = True
+    #Use the original name instead of the name in the alias (if it has one), just because some are variants in global.mad, like no_grass ones
+    originalName = textureName
 
     #Check if the image doesn't exist
     if (not Path(path.join("./", texturePath, textureName + '.dds')).is_file()):
@@ -523,11 +525,11 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
             textureFound = False
 
     #Check if the material already exists
-    if (textureName in bpy.data.materials):
-        material = bpy.data.materials[textureName]
+    if (originalName in bpy.data.materials):
+        material = bpy.data.materials[originalName]
         return material
     
-    material = bpy.data.materials.new(name=textureName)
+    material = bpy.data.materials.new(name=originalName)
     material.use_nodes = True
     bsdf = material.node_tree.nodes['Principled BSDF']
     texureImage = material.node_tree.nodes.new('ShaderNodeTexImage') if textureFound else material.node_tree.nodes.new('ShaderNodeRGB')
