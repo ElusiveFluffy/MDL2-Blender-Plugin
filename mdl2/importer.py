@@ -516,8 +516,8 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
     #Check if the image doesn't exist
     if (not Path(path.join("./", texturePath, textureName + '.dds')).is_file()):
         #Check if it has a alias
-        if ((textureName.lower() in TextureAlias) and (Path(path.join("./", texturePath, TextureAlias[textureName] + '.dds')).is_file())):
-            textureName = TextureAlias[textureName]
+        if ((textureName.lower() in TextureAlias) and (Path(path.join("./", texturePath, TextureAlias[textureName.lower()] + '.dds')).is_file())):
+            textureName = TextureAlias[textureName.lower()]
         #Check lowercase name
         elif (Path(path.join("./", texturePath, textureName.lower() + '.dds')).is_file()):
             textureName = textureName.lower()
