@@ -238,7 +238,9 @@ def ExportModel(self, context, filepath):
     #Strips
     originalSelectedObjects = bpy.context.selected_objects
     originalActiveObject = bpy.context.view_layer.objects.active
-    originalMode = bpy.context.object.mode
+    #If no object is the active object than this will have a error
+    if (originalActiveObject != None):
+        originalMode = bpy.context.object.mode
     
     for index, collection in enumerate(vaildCollections):
         meshes = list(o for o in collection.all_objects if o.type == 'MESH')
@@ -255,7 +257,9 @@ def ExportModel(self, context, filepath):
     for object in originalSelectedObjects:
         object.select_set(True)
     bpy.context.view_layer.objects.active = originalActiveObject
-    bpy.ops.object.mode_set(mode = originalMode)
+    #Check if there was a active object, if there is none then no mode can be set so can assume it was in object mode
+    if (originalActiveObject != None):
+        bpy.ops.object.mode_set(mode = originalMode)
 
     stripTime = time.time() - startTime
     startTime = time.time()
@@ -483,9 +487,11 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
     uvIdentifier = b'\x04\x80\x08\x6D'
     colorIdentifier = b'\x05\xC0\x08\x6E'
 
+    #Loop through all the different screen areas open in blender and find which one is the viewport
     for screenArea in bpy.context.screen.areas:
         if screenArea.type == 'VIEW_3D':
             break
+    #From that screen area get its context for the context override used for the rip operation
     contextOverride = {}
     contextOverride["area"] = screenArea
     contextOverride["space_data"] = screenArea.spaces.active
@@ -493,8 +499,10 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
     
     mesh: Object
     for mesh in meshes:
-        #Make sure to be in object mode to avoid the deselect error
-        bpy.ops.object.mode_set(mode = 'OBJECT')
+        #Make sure something is a active object otherwise will get a error
+        if (bpy.context.active_object != None):
+            #Make sure to be in object mode to avoid the deselect error
+            bpy.ops.object.mode_set(mode = 'OBJECT')
 
         originalMesh = bmesh.new()
         originalMesh.from_mesh(mesh.data)
@@ -530,16 +538,16 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
         #Check for any vertices that have more than one UV, otherwise they will have a glitched UV (This only occurs on faces that are connected by 1 vertex)
         #Kept the edge split method above because its much more efficient than using this for the edges too
         UVCoordsDictionary = {}
-        joinedUVs = []
+        linkedUVs = []
         for vertexLoop in mesh.data.loops:
             #If it doesn't have the same coordinate can assume that the vertex has more than one UV
             if (vertexLoop.vertex_index in UVCoordsDictionary and mesh.data.uv_layers[0].data[vertexLoop.index].uv != UVCoordsDictionary[vertexLoop.vertex_index]):
-                if (vertexLoop.vertex_index not in joinedUVs):
-                    joinedUVs.append(vertexLoop.vertex_index)
+                if (vertexLoop.vertex_index not in linkedUVs):
+                    linkedUVs.append(vertexLoop.vertex_index)
             UVCoordsDictionary[vertexLoop.vertex_index] = mesh.data.uv_layers[0].data[vertexLoop.index].uv
 
         #Loop through all of the verts that have more than one UV, if any, and split them
-        for vert in joinedUVs:
+        for vert in linkedUVs:
             mesh.data.vertices[vert].select = True
             bpy.ops.object.mode_set(mode = 'EDIT', toggle=False)
             bpy.ops.mesh.rip(contextOverride, 'INVOKE_DEFAULT')
