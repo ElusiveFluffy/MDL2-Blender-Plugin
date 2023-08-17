@@ -570,6 +570,9 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
 
         bm.faces.ensure_lookup_table()
         uv_layer = bm.loops.layers.uv.active
+        if (len(mesh.data.vertex_colors) > 0):
+            vertexColourLayer = bm.loops.layers.color.active
+            vertexColoursDict = {}
         VertexLoop = []
         #Using a dictionary only works because the mesh got split based on the UV island, 
         #meaning now every vertex is only assigned to one UV vertex
@@ -581,6 +584,8 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
             for loop in f.loops:
                 VertexLoop.append(loop.vert.index)
                 UVCoordsDictionary[loop.vert.index] = loop[uv_layer].uv
+                if (len(mesh.data.vertex_colors) > 0):
+                    vertexColoursDict[loop.vert.index] = loop[vertexColourLayer]
 
         sg = StripGenerater(faceIDX)
         stripsIDX = sg.gen_strips()
@@ -621,7 +626,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
             file.write(colorIdentifier)
             if (len(mesh.data.vertex_colors) > 0):
                 for index in strip:
-                    colours = EncodeColour(Vector(mesh.data.vertex_colors.active.data[VertexLoop.index(index)].color))
+                    colours = EncodeColour(Vector(vertexColoursDict[index]))
                     file.write(struct.pack('BBBB', int(colours.x), int(colours.y), int(colours.z), int(colours.w)))
             else:
                 for index in strip:
@@ -668,7 +673,7 @@ def EncodeColour(Colours):
                 continue
             Colours[b] = Colours[b] * 255
             #expression_if_true *if* condition *else* expression_if_false
-            Colours[b] = ((Colours[b] + 1)/2) if (int(Colours[b]) & 1) else int((Colours[b]/2)+1) | 0x80
+            Colours[b] = ((Colours[b] + 1)/2) if (int(Colours[b]) & 1) else int((Colours[b]/2)+1)
         return Colours
 
 #Credit to Zawata for his strip gen code
