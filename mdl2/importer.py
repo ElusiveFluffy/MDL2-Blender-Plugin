@@ -396,7 +396,7 @@ class CreateBlenderMesh:
 
                 #UVs and vertex colours
                 uv = mesh.uv_layers.new(name='UV')
-                mesh.vertex_colors.new(name=ComponentDescriptor.Descriptors[components].ComponentName + ' Colour')
+                mesh.vertex_colors.new(name='Colour')
                 for vertexLoop in mesh.loops:
                     uv.data[vertexLoop.index].uv = Strips.Objects[components][meshes].UVs[vertexLoop.vertex_index]
                     mesh.vertex_colors.active.data[vertexLoop.index].color = Strips.Objects[components][meshes].VertexColours[vertexLoop.vertex_index]
