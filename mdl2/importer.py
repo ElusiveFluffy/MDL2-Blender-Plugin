@@ -359,7 +359,7 @@ class Strips:
         print('Total Time (Sec): ' + str(vertexTime + normalTime + colourTime + UVTime + faceTime))
 
     def ComputedNormal(vertexPos1: Vector, vertexPos2: Vector, vertexPos3: Vector):
-        return ((vertexPos3 - vertexPos1).cross(vertexPos2 - vertexPos1)).normalized()
+        return ((vertexPos2 - vertexPos1).cross(vertexPos3 - vertexPos1)).normalized()
 
 
 
@@ -420,10 +420,6 @@ class CreateBlenderMesh:
                 if (MeshDescriptor.Descriptors[components][meshes].TextureName in enum_members_from_type(type(object.MDLCollisions), 'CollisionTypes')):
                     object.MDLCollisions.CollisionTypes = MeshDescriptor.Descriptors[components][meshes].TextureName
                     collisionMat = True
-                #elif (any(substring in MeshDescriptor.Descriptors[components][meshes].TextureName.lower() for substring in ['ty_', 'ice', 'room'])):
-                    #object.MDLCollisions.CollisionTypes = 'Custom'
-                    #object.MDLCollisions.CustomCollision = MeshDescriptor.Descriptors[components][meshes].TextureName
-                    #collisionMat = True
                 
                 #Only make the material if its not a collision material
                 if (not collisionMat):

@@ -614,8 +614,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
                 
             file.write(normalIdentifier)
             for index in strip:
-                #Multiply by the world matrix to apply the transforms to the mesh
-                vertexNormal = Vector(np.clip((mesh.matrix_world @ bm.verts[index].normal) * 127, -128, 127)) #Clamp(clip) just in case, sometimes goes over the limit of a byte
+                vertexNormal = Vector(np.clip((bm.verts[index].normal) * 127, -128, 127)) #Clamp(clip) just in case, sometimes goes over the limit of a byte
                 file.write(struct.pack('bbb', int(vertexNormal.x), int(vertexNormal.z), int(vertexNormal.y)))
                 file.write(ctypes.c_byte(0)) #Bone 2
                 
@@ -651,7 +650,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
     return meshIndex
 
 def WriteUVs(UVCoords: Vector, file):
-    #Copy it so it doesn't edit the original so its still intact when another vertice references it
+    #Copy it so it doesn't edit the original so its still intact when another vertex references it
     UVCoordsCopy = UVCoords.copy()
     #Vertically flip it with this method if not in the 0-1 range
     if (UVCoordsCopy.y > 1 or UVCoordsCopy.y < 0):
