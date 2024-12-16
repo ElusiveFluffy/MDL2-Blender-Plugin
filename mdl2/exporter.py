@@ -4,6 +4,7 @@ import bmesh
 import ctypes
 import struct
 import numpy as np
+import math
 
 # ExportHelper is a helper class, defines filename and
 # invoke() function which calls the file selector.
@@ -29,11 +30,17 @@ class ExportMDL2(Operator, ExportHelper):
         maxlen=255,  # Max internal buffer length, longer would be clamped.
     )
 
+    ExportAnimNodes: BoolProperty(
+        name="Export Anim Nodes",
+        description="Exports the animation nodes and skinning data for animated models.",
+        default=False,
+    )
+
     def execute(self, context):
-        return ExportModel(self, context, self.filepath)
+        return ExportModel(self, context, self.filepath, self.ExportAnimNodes)
     
 
-def ExportModel(self, context, filepath):
+def ExportModel(self, context, filepath, exportAnimNodes):
 
     #Check if there is any meshes in the scene otherwise will get a error if there is none
     meshes = list(o for o in bpy.data.objects if o.type == 'MESH')
@@ -53,7 +60,10 @@ def ExportModel(self, context, filepath):
 
     #MDL Header
     file.write(bytearray("MDL2", 'utf-8'))
-    file.write(ctypes.c_short(1)) #Matrix count (Hard code for now to 1 until animation stuff is done)
+    if ('Anim Nodes' in bpy.data.collections):
+        file.write(ctypes.c_short(len(list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY')) + 1))
+    else:
+        file.write(ctypes.c_short(1))
     #Check that the collection has a mesh in it
     validCollectionCount = 0
     for collection in bpy.data.collections:
@@ -61,12 +71,19 @@ def ExportModel(self, context, filepath):
         if (len(meshes) > 0):
             validCollectionCount += 1
     file.write(ctypes.c_short(validCollectionCount + len(list(o for o in bpy.data.scenes['Scene'].collection.all_objects if o.type == 'MESH' and o.users_collection[0] == bpy.data.scenes['Scene'].collection)))) #Component Count
+    
     #Ref Points
     if ('Ref Points' in bpy.data.collections):
         file.write(ctypes.c_short(len(list(o for o in bpy.data.collections['Ref Points'].all_objects if o.type == 'EMPTY'))))
     else:
         file.write(ctypes.c_short(0))
-    file.write(ctypes.c_short(0)) #Anim Node count (Hard code for now to 0 until animation stuff is done)
+
+    #Anim Nodes
+    if ('Anim Nodes' in bpy.data.collections and exportAnimNodes):
+        file.write(ctypes.c_short(len(list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY'))))
+    else:
+        file.write(ctypes.c_short(0))
+
     #Come back on the second pass for offset
     componentDescOffset = file.tell()
     file.write(ctypes.c_int(0)) #Fill with a blank int for now
@@ -139,7 +156,7 @@ def ExportModel(self, context, filepath):
         #If theres no meshes don't add it
         if (len(meshes) > 0):
             vaildCollections.append(collection)
-            offsets = WriteComponentDesc(meshes, file)
+            offsets = WriteComponentDesc(meshes, file, exportAnimNodes)
             componentNameOffsets.append(offsets[0])
             parentedBoneOffsets.append(offsets[1])
             meshDescOffsets.append(offsets[2])
@@ -150,7 +167,7 @@ def ExportModel(self, context, filepath):
     sceneParentedBoneOffsets = []
     sceneMeshDescOffsets = []
     for mesh in sceneMeshes:
-        offsets = WriteComponentDesc([mesh], file) #make it a list so its iterable so I don't have to have a check with the for loop
+        offsets = WriteComponentDesc([mesh], file, exportAnimNodes) #make it a list so its iterable so I don't have to have a check with the for loop
         sceneComponentNameOffsets.append(offsets[0])
         sceneParentedBoneOffsets.append(offsets[1])
         sceneMeshDescOffsets.append(offsets[2])
@@ -187,7 +204,7 @@ def ExportModel(self, context, filepath):
 
     refPointsTime = time.time() - startTime
     startTime = time.time()
-    
+
     ##-----------------------------------------------------------
 
     #Mesh Descriptor
@@ -245,12 +262,12 @@ def ExportModel(self, context, filepath):
     for index, collection in enumerate(vaildCollections):
         meshes = list(o for o in collection.all_objects if o.type == 'MESH')
 
-        meshIndex = WriteStrips(meshes, file, stripListOffsets, meshIndex)
+        meshIndex = WriteStrips(meshes, file, stripListOffsets, meshIndex, exportAnimNodes)
 
     #Do the same for all the scene meshes
     for index, mesh in enumerate(sceneMeshes):
         #Make mesh a list so can iterate on it
-        WriteStrips([mesh], file, sceneStripListOffsets, index)
+        WriteStrips([mesh], file, sceneStripListOffsets, index, exportAnimNodes)
     
     #Restore it to the state it was in before
     bpy.ops.object.select_all(action='DESELECT')
@@ -265,7 +282,20 @@ def ExportModel(self, context, filepath):
     startTime = time.time()
 
     ##-----------------------------------------------------------
-    
+
+    animNodeLocation = file.tell()
+    file.seek(animNodeOffset)
+    file.write(ctypes.c_int(animNodeLocation))
+    file.seek(animNodeLocation)
+    if ('Anim Nodes' in bpy.data.collections and exportAnimNodes):
+        animNodes = list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY')        
+        for node in animNodes:
+            nodeLocation = node.location.xzy * 100
+            file.write(struct.pack("fff", nodeLocation.x, nodeLocation.y, nodeLocation.z))
+            file.write(ctypes.c_int(0))
+
+    ##----------------------------------------------------------
+
     meshIndex = 0
     textureDict = {}
     dictionaryCount = 0
@@ -304,6 +334,7 @@ def ExportModel(self, context, filepath):
 
         tempDictionaryCount, meshIndex = WriteStringList(file, meshes, textureNameOffsets, textureDict, meshIndex)
         dictionaryCount += tempDictionaryCount
+    
 
     for index, mesh in enumerate(sceneMeshes):
         #Set the offset
@@ -329,7 +360,6 @@ def ExportModel(self, context, filepath):
 
         tempDictionaryCount, meshIndex = WriteStringList(file, [mesh], sceneTextureNameOffsets, textureDict, index)
         dictionaryCount += tempDictionaryCount
-        
 
     originalFileName = file.tell()
     file.seek(originalFileNameOffset)
@@ -428,7 +458,7 @@ def WriteStringList(file, meshes, textureNameOffsets, textureDict, meshIndex):
         meshIndex += 1
     return dictionaryCount, meshIndex 
 
-def WriteComponentDesc(meshes, file):
+def WriteComponentDesc(meshes, file, exportAnimNodes):
 
     #Component bounding box (seems unneeded but might as well include it just incase)
     bbox_corners = []
@@ -460,7 +490,10 @@ def WriteComponentDesc(meshes, file):
         
     file.write(ctypes.c_int(0)) #Unknown
 
-    file.write(ctypes.c_int(0)) #Sub object type
+    if (exportAnimNodes):
+        file.write(ctypes.c_int(2)) #Sub object type
+    else:
+        file.write(ctypes.c_int(0)) #Sub object type
     file.write(ctypes.c_short(0)) #Render thing?
 
     file.write(ctypes.c_short(len(meshes))) #Mesh count
@@ -473,7 +506,7 @@ def WriteComponentDesc(meshes, file):
 
     return componentNameOffset, parentedBoneOffset, MeshDescOffset
 
-def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
+def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNodes):
 
     firstStripHeaderPart1 = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x02\x6C'
     secondStripHeaderPart1 = b'\xFF\xFF\x00\x01\x00\x00\x00\x14\x00\x80\x02\x6C'
@@ -598,6 +631,8 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
         file.seek(stripLocation)
 
         firstStrip = True
+        bm.to_mesh(mesh.data)
+        mesh.data.update()
         #Stop a error from happening when getting the vertex location
         bm.verts.ensure_lookup_table()
         for strip in stripsIDX:
@@ -614,13 +649,24 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
                 
             file.write(normalIdentifier)
             for index in strip:
-                vertexNormal = Vector(np.clip((bm.verts[index].normal) * 127, -128, 127)) #Clamp(clip) just in case, sometimes goes over the limit of a byte
+                #Multiply by the world matrix to apply the transforms to the mesh
+                vertexNormal = Vector(np.clip(bm.verts[index].normal * 127, -128, 127)) #Clamp(clip) just in case, sometimes goes over the limit of a byte
                 file.write(struct.pack('bbb', int(vertexNormal.x), int(vertexNormal.z), int(vertexNormal.y)))
-                file.write(ctypes.c_byte(0)) #Bone 2
+                #ANIM NODE BONE 2
+                deform = bm.verts.layers.deform.active
+                if ('Anim Nodes' in bpy.data.collections and len(bm.verts[index][deform]) > 1 and exportAnimNodes):
+                    group_name = obj.vertex_groups[obj.data.vertices[index].groups[1].group].name
+                    animNodes = list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY')  
+                    nodeIndex = next((i for i, node in enumerate(animNodes) if node.name.lower() == group_name.lower()), None)
+                    if nodeIndex == None:
+                        print('Node: ' + group_name + ' does not exist')
+                    file.write(ctypes.c_byte((nodeIndex + 1) * 2)) #Bone 2
+                else:
+                    file.write(ctypes.c_byte(0)) #Bone 2
                 
             file.write(uvIdentifier)
             for index in strip:
-                WriteUVs(UVCoordsDictionary[index], file)
+                WriteUVs(UVCoordsDictionary[index], file, obj, index, exportAnimNodes)
 
             file.write(colorIdentifier)
             if (len(mesh.data.vertex_colors) > 0):
@@ -649,7 +695,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex):
     
     return meshIndex
 
-def WriteUVs(UVCoords: Vector, file):
+def WriteUVs(UVCoords: Vector, file, obj, index, exportAnimNodes):
     #Copy it so it doesn't edit the original so its still intact when another vertex references it
     UVCoordsCopy = UVCoords.copy()
     #Vertically flip it with this method if not in the 0-1 range
@@ -662,8 +708,20 @@ def WriteUVs(UVCoords: Vector, file):
                     
     UVCoordsCopy = UVCoordsCopy * 4096
     file.write(struct.pack('hh', int(UVCoordsCopy.x), int(UVCoordsCopy.y)))
-    file.write(ctypes.c_short(0)) #Bone weight
-    file.write(ctypes.c_short(0)) #Bone 1
+    #ANIM NODE BONE 1
+    if ('Anim Nodes' in bpy.data.collections and exportAnimNodes):
+        group_name = obj.vertex_groups[obj.data.vertices[index].groups[0].group].name
+        group_weight = obj.data.vertices[index].groups[0].weight
+        group_weight = math.floor(group_weight * 4096)
+        animNodes = list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY')  
+        nodeIndex = next((i for i, node in enumerate(animNodes) if node.name.lower() == group_name.lower()), None)
+        if nodeIndex == None:
+                        print('Node: ' + group_name + ' does not exist')
+        file.write(ctypes.c_short(group_weight)) #Bone weight
+        file.write(ctypes.c_short((nodeIndex + 1) * 4)) #Bone 1
+    else:
+        file.write(ctypes.c_short(0)) #Bone weight
+        file.write(ctypes.c_short(0)) #Bone 1
 
 def EncodeColour(Colours):
         #Loop through each colour channel and convert them to a 0-255 range
