@@ -5,6 +5,7 @@ import bmesh
 import json
 
 from io import BufferedReader
+import os
 # ImportHelper is a helper class, defines filename and
 # invoke() function which calls the file selector.
 from bpy_extras.io_utils import ImportHelper
@@ -54,7 +55,11 @@ class ImportMDL2(Operator, ImportHelper):
         description="Import the bounding box from the MDL data, some models use the bounding box for collision (mainly just the tilting platforms)",
         default=False,
     )
-
+    ImportAnimNodes: BoolProperty(
+        name="Import Anim Nodes",
+        description="Imports the animation nodes from animated models and stores skinning data in vertex groups.",
+        default=False,
+    )
     OriginEnum: EnumProperty(
         name='Origin Position',
         description='Which origin to use',
@@ -64,13 +69,19 @@ class ImportMDL2(Operator, ImportHelper):
     )
 
     def execute(self, context):
-        return CreateModel(self, context, self.filepath, self.SmoothShading, self.ImportBoundingBox, self.OriginEnum)
+        return CreateModel(self, context, self.filepath, self.SmoothShading, self.ImportBoundingBox, self.ImportAnimNodes, self.OriginEnum)
 
     
-def CreateModel(self, context, filepath, smoothShading, importBoundingBox, originEnum):
+def CreateModel(self, context, filepath, smoothShading, importBoundingBox, importAnimNodes, originEnum):
 
     self.report({'INFO'}, 'Start Reading MDL')
     file = open(filepath, "rb")
+    anim_filepath = filepath.replace(".mdl", ".anm")
+ 
+    if os.path.exists(anim_filepath) and importAnimNodes:
+        animFile = open(anim_filepath, "rb")
+    else:
+        animFile = None  # Or handle this case as needed
     global FilePath
     FilePath = filepath
 
@@ -78,15 +89,18 @@ def CreateModel(self, context, filepath, smoothShading, importBoundingBox, origi
     MDLHeader.GatherValues(file)
     ComponentDescriptor.GatherValues(file)
 
-    if (MDLHeader.RefPointCount != 0):
+    if MDLHeader.RefPointCount != 0:
         RefPoints.GatherValues(file)
+
+    if MDLHeader.AnimNodeCount != 0 and importAnimNodes:
+        AnimNodes.GatherValues(file, animFile)
 
     MeshDescriptor.GatherValues(file)
     Strips.GatherValues(file)
 
     file.close()
     
-    CreateBlenderMesh.Create(smoothShading, importBoundingBox, originEnum)
+    CreateBlenderMesh.Create(smoothShading, importBoundingBox, importAnimNodes, originEnum)
 
     #Add a undo/redo restore point
     #Makes it so undo doesn't act weirdly sometimes, and fixes the crash when trying to undo the import right after importing it
@@ -133,6 +147,32 @@ class MDLHeader:
 
         MDLHeader.DictEntriesCount = int.from_bytes(file.read(4), byteorder='little', signed=False)
         MDLHeader.DictOffset = int.from_bytes(file.read(4), byteorder='little', signed=False)
+
+
+class AnimNodes:
+    Nodes = list()
+    NodeNames = []
+
+    def GatherValues(file: BufferedReader, anmFile: BufferedReader):
+        AnimNodes.Nodes = list()
+        AnimNodes.NodeNames = []
+        file.seek(MDLHeader.AnimNodeOffset, 0)
+
+        for n in range(MDLHeader.AnimNodeCount):
+            anmFile.seek(0x40 + 0x20 * n, 0)
+            AnimNodeInstance = AnimNodeData()
+            AnimNodes.Nodes.append(AnimNodeInstance)
+    
+            #Divide by 100 to scale down
+            AnimNodeInstance.Position = Vector(struct.unpack('ffff', file.read(16)))/ModelScaleRatio
+            nodeNameOffset = int.from_bytes(anmFile.read(4), byteorder='little', signed=False)
+            anmFile.seek(nodeNameOffset, 0)
+            name = Strings.Read0EndedString(anmFile)
+            AnimNodeInstance.Name = name
+            print(name)
+            AnimNodes.NodeNames.append(name)
+
+
 
 class ComponentDescriptor:
     Descriptors = list()
@@ -376,13 +416,27 @@ class Strips:
 
 class CreateBlenderMesh:
 
-    def Create(shadeSmooth: bool, importBoundingBox: bool, originEnum: EnumProperty):
+    def Create(shadeSmooth: bool, importBoundingBox: bool, importAnimNodes: bool, originEnum: EnumProperty):
         startTime = time.time()
         #Make sure something is a active object otherwise will get a error
-        if (bpy.context.active_object != None):
+        if bpy.context.active_object != None:
             bpy.ops.object.mode_set(mode='OBJECT')
         #Start with everything deselected so all the origins get set
         bpy.ops.object.select_all(action='DESELECT')
+
+        if MDLHeader.AnimNodeCount > 0 and importAnimNodes:
+            #Create the collection for the nodes, check if the collection already exists for easier exporting
+            if ('Anim Nodes' not in bpy.data.collections):
+                nodesCollection = bpy.data.collections.new('Anim Nodes')
+                bpy.context.scene.collection.children.link(nodesCollection)
+            else:
+                nodesCollection = bpy.data.collections['Anim Nodes']
+
+            for node in AnimNodes.Nodes:
+                empty = bpy.data.objects.new(node.Name, None)
+                empty.location = node.Position.xzy
+                empty.scale = (0.05, 0.05, 0.05)
+                nodesCollection.objects.link(empty)
 
         objectsToSelect = []
         for components in range(MDLHeader.ComponentCount):
@@ -401,20 +455,35 @@ class CreateBlenderMesh:
                     uv.data[vertexLoop.index].uv = Strips.Objects[components][meshes].UVs[vertexLoop.vertex_index]
                     mesh.vertex_colors.active.data[vertexLoop.index].color = Strips.Objects[components][meshes].VertexColours[vertexLoop.vertex_index]
 
-                #use bmesh for the remove doubles function for much faster import
-                bm = bmesh.new()
+                #Create the object
+                object = bpy.data.objects.new(ComponentDescriptor.Descriptors[components].ComponentName, mesh)
+                
+                if MDLHeader.AnimNodeCount > 0 and importAnimNodes:
+                    for vert in range(len(Strips.Objects[components][meshes].BoneWeight)):
+                        bone1Name = AnimNodes.NodeNames[Strips.Objects[components][meshes].Bone1[vert]]
+                        bone2Name = AnimNodes.NodeNames[Strips.Objects[components][meshes].Bone2[vert]]
+                        bone1Weight = Strips.Objects[components][meshes].BoneWeight[vert]
+                        bone2Weight = 1 - bone1Weight
+                        if bone1Name in object.vertex_groups:
+                            bone1_vertex_group = object.vertex_groups[bone1Name]
+                        else:
+                            bone1_vertex_group = object.vertex_groups.new(name=bone1Name)
+                        bone1_vertex_group.add([vert], bone1Weight, 'ADD')   
+                        if bone2Name in object.vertex_groups:
+                            bone2_vertex_group = object.vertex_groups[bone2Name]
+                        else:
+                            bone2_vertex_group = object.vertex_groups.new(name=bone2Name)
+                        bone2_vertex_group.add([vert], bone2Weight, 'ADD')   
 
+                bm = bmesh.new()
                 bm.from_mesh(mesh)
                 bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005)
-
                 bm.to_mesh(mesh)
                 mesh.update()
                 bm.clear()
                 bm.free()
-
-                #Create the object
                 object = bpy.data.objects.new(ComponentDescriptor.Descriptors[components].ComponentName, mesh)
-                
+
                 #Check if the texture if for a collision type
                 collisionMat = False
                 if (MeshDescriptor.Descriptors[components][meshes].TextureName in enum_members_from_type(type(object.MDLCollisions), 'CollisionTypes')):
@@ -593,6 +662,10 @@ class ComponentData:
     MeshCount = 0
     MeshDescOffset = 0
     MiscPtr = 0
+
+class AnimNodeData:
+    Position = Vector((0.0, 0.0, 0.0, 0.0))
+    Name = "Node"
 
 class RefPointData:
     Position = Vector((0.0, 0.0, 0.0, 0.0))
