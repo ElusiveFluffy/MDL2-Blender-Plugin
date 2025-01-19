@@ -448,12 +448,13 @@ class CreateBlenderMesh:
 
                 mesh.from_pydata(Strips.Objects[components][meshes].VertexPositions, [], Strips.Objects[components][meshes].Faces)
 
-                #UVs and vertex colours
-                uv = mesh.uv_layers.new(name='UV')
-                mesh.vertex_colors.new(name='Colour')
+                #UVs and vertex colours, and make sure they active
+                mesh.uv_layers.active = mesh.uv_layers.new(name='UV')
+                mesh.vertex_colors.active = mesh.vertex_colors.new(name='Colour')
                 for vertexLoop in mesh.loops:
-                    uv.data[vertexLoop.index].uv = Strips.Objects[components][meshes].UVs[vertexLoop.vertex_index]
+                    mesh.uv_layers.active.data[vertexLoop.index].uv = Strips.Objects[components][meshes].UVs[vertexLoop.vertex_index]
                     mesh.vertex_colors.active.data[vertexLoop.index].color = Strips.Objects[components][meshes].VertexColours[vertexLoop.vertex_index]
+
 
                 #Create the object
                 object = bpy.data.objects.new(ComponentDescriptor.Descriptors[components].ComponentName, mesh)
@@ -482,7 +483,6 @@ class CreateBlenderMesh:
                 mesh.update()
                 bm.clear()
                 bm.free()
-                object = bpy.data.objects.new(ComponentDescriptor.Descriptors[components].ComponentName, mesh)
 
                 #Check if the texture if for a collision type
                 collisionMat = False
@@ -606,9 +606,19 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
     colourMultiply.blend_type = 'MULTIPLY'
     colourMultiply.inputs['Fac'].default_value = 1.0
     vertexColour = material.node_tree.nodes.new('ShaderNodeVertexColor')
+    vertexColour.layer_name = 'Colour'
 
+    textureHasAlpha = False
     if (textureFound):
         texureImage.image = bpy.data.images.load(path.join("./", texturePath, textureName + '.dds'))
+        file = open(path.join("./", texturePath, textureName + '.dds'), "rb")
+        file.seek(84)
+        format = file.read(4)
+        print('DDS DXT format:', format)
+        textureHasAlpha = format == b'DXT5'
+        print(textureHasAlpha)
+        file.close()
+
     else:
         texureImage.outputs[0].default_value = (1, 1, 1, 1)
     material.node_tree.links.new(colourMultiply.inputs['Color1'], texureImage.outputs['Color'])
@@ -616,16 +626,19 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
     material.node_tree.links.new(bsdf.inputs['Base Color'], colourMultiply.outputs['Color'])
 
     #Check if the image has a alpha channel
-    if (((texureImage.image.depth == 32) if textureFound else False) or transparentVertexColour):
+    if (textureHasAlpha or transparentVertexColour):
         #Set up the alpha
         mathNode = material.node_tree.nodes.new('ShaderNodeMath')
         mathNode.operation = 'MULTIPLY'
         material.node_tree.links.new(mathNode.inputs[0], texureImage.outputs['Alpha'] if textureFound else placeholderAlpha.outputs[0])
         material.node_tree.links.new(mathNode.inputs[1], vertexColour.outputs['Alpha'])
         material.node_tree.links.new(bsdf.inputs['Alpha'], mathNode.outputs[0])
+        
         #Just safer to assume its alpha blended
-        material.blend_method = 'BLEND'
-        material.shadow_method = 'HASHED'
+        material.blend_method = 'HASHED'
+        #This will cause a error in blender 4
+        if  bpy.app.version < (4, 0, 0):
+            material.shadow_method = 'HASHED'
         
     return material
 
