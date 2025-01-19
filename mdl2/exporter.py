@@ -539,6 +539,13 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
 
         originalMesh = bmesh.new()
         originalMesh.from_mesh(mesh.data)
+        
+        #Gather the normals from the unsplit mesh and store them based on their loop index (which will be the same after splitting the mesh)
+        #Need to use this bmesh as the normal is stored as a reference to the bmesh
+        originalMesh.verts.ensure_lookup_table()
+        originalMeshNormals = {}
+        for vertexLoop in mesh.data.loops:
+                originalMeshNormals[vertexLoop.index] = originalMesh.verts[vertexLoop.vertex_index].normal
 
         #Split the mesh on the UV seams so that it'll export the UVs correctly and not connect any that shouldn't be connected
         bpy.context.view_layer.objects.active = mesh
@@ -636,6 +643,14 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
         mesh.data.update()
         #Stop a error from happening when getting the vertex location
         bm.verts.ensure_lookup_table()
+
+        #Make the look up table for the split mesh to quickly find the loop index for the original normals dictionary
+        normalLookUpTable = {}
+        for vertexLoop in mesh.data.loops:
+            #Check if it hasn't been added already because the split mesh can have more loop indices than the unsplit mesh apparently?
+            if vertexLoop.vertex_index not in normalLookUpTable:
+                normalLookUpTable[vertexLoop.vertex_index] = vertexLoop.index
+
         for strip in stripsIDX:
             file.write(firstStripHeaderPart1 if firstStrip else secondStripHeaderPart1)
             file.write(ctypes.c_int(len(strip)))
@@ -650,8 +665,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
                 
             file.write(normalIdentifier)
             for index in strip:
-                #Multiply by the world matrix to apply the transforms to the mesh
-                vertexNormal = Vector(np.clip(bm.verts[index].normal * 127, -128, 127)) #Clamp(clip) just in case, sometimes goes over the limit of a byte
+                vertexNormal = Vector(originalMeshNormals[normalLookUpTable[index]] * 127) #Clamp(clip) just in case, sometimes goes over the limit of a byte
                 file.write(struct.pack('bbb', int(vertexNormal.x), int(vertexNormal.z), int(vertexNormal.y)))
                 #ANIM NODE BONE 2
                 deform = bm.verts.layers.deform.active
