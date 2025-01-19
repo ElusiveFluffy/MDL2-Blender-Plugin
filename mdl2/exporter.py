@@ -147,7 +147,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     componentNameOffsets = []
     parentedBoneOffsets = []
     meshDescOffsets = []
-    #Collections that have atlest 1 mesh in them
+    #Collections that have at least 1 mesh in them
     vaildCollections = []
 
     for collection in bpy.data.collections:
@@ -583,7 +583,8 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
         for vert in linkedUVs:
             mesh.data.vertices[vert].select = True
             bpy.ops.object.mode_set(mode = 'EDIT', toggle=False)
-            bpy.ops.mesh.rip(contextOverride, 'INVOKE_DEFAULT')
+            with bpy.context.temp_override(area=contextOverride['area'], region=contextOverride['region']):
+                bpy.ops.mesh.rip('INVOKE_DEFAULT')
             bpy.ops.mesh.select_all(action='DESELECT')
             bpy.ops.object.mode_set(mode = 'OBJECT')
 
