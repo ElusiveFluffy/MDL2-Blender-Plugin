@@ -634,7 +634,6 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
         material.node_tree.links.new(mathNode.inputs[1], vertexColour.outputs['Alpha'])
         material.node_tree.links.new(bsdf.inputs['Alpha'], mathNode.outputs[0])
         
-        #Just safer to assume its alpha blended
         material.blend_method = 'HASHED'
         #This will cause a error in blender 4
         if  bpy.app.version < (4, 0, 0):
