@@ -3,8 +3,8 @@ bl_info = {
         "name": "MDL2 Tools",
         "description": "Import and export MDL2s",
         "author": "Kana Miyoshi",
-        "version": (1, 1),
-        "blender": (2, 80, 0),
+        "version": (1, 2),
+        "blender": (3, 0, 0),
         "location": "View3D > Sidebar",
         "category": "Object"
         }
