@@ -80,8 +80,9 @@ def CreateModel(self, context, filepath, smoothShading, importBoundingBox, impor
  
     if os.path.exists(anim_filepath) and importAnimNodes:
         animFile = open(anim_filepath, "rb")
-    else:
-        print(anim_filepath + " is missing, skipping importing anim nodes")
+    elif importAnimNodes:
+        print(anim_filepath + " is missing, unable to import anim nodes")
+        self.report({'WARNING'}, anim_filepath + " is missing, unable to import anim nodes")
         #Reset it back to false
         importAnimNodes = False
     global FilePath
