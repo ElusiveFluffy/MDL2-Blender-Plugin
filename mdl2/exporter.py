@@ -536,16 +536,27 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
         if (bpy.context.active_object != None):
             #Make sure to be in object mode to avoid the deselect error
             bpy.ops.object.mode_set(mode = 'OBJECT')
-
+        
         originalMesh = bmesh.new()
         originalMesh.from_mesh(mesh.data)
+
+        originalMeshTriangulated = bmesh.new()
+        originalMeshTriangulated.from_mesh(mesh.data)
+
+        bmesh.ops.triangulate(originalMeshTriangulated, faces=originalMeshTriangulated.faces)
+        #Need to set it back to the actual mesh because the easiest way to get the vertex loops
+        #Also saves needing to triangulate the mesh later so Zawata's strip gen code will work
+        originalMeshTriangulated.to_mesh(mesh.data)
         
-        #Gather the normals from the unsplit mesh and store them based on their loop index (which will be the same after splitting the mesh)
-        #Need to use this bmesh as the normal is stored as a reference to the bmesh
-        originalMesh.verts.ensure_lookup_table()
+        #Gather the normals from the unsplit triangulated mesh and store them based on their loop index (needs to be triangulated so it will be the same after splitting the mesh)
+        originalMeshTriangulated.verts.ensure_lookup_table()
         originalMeshNormals = {}
         for vertexLoop in mesh.data.loops:
-                originalMeshNormals[vertexLoop.index] = originalMesh.verts[vertexLoop.vertex_index].normal
+                #Copy it so its not still referencing the bmesh which gets cleared after this
+                originalMeshNormals[vertexLoop.index] = originalMeshTriangulated.verts[vertexLoop.vertex_index].normal.copy()
+
+        originalMeshTriangulated.clear
+        originalMeshTriangulated.free()
 
         #Split the mesh on the UV seams so that it'll export the UVs correctly and not connect any that shouldn't be connected
         bpy.context.view_layer.objects.active = mesh
@@ -598,8 +609,6 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
         #Get all the indices of the mesh
         bm = bmesh.new()
         bm.from_mesh(mesh.data)
-        #Make sure to triangulate the bmesh otherwise Zawata's strip gen code won't work
-        bmesh.ops.triangulate(bm, faces=bm.faces)
             
         bm.verts.ensure_lookup_table()
         invalidEdges = []
@@ -647,9 +656,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
         #Make the look up table for the split mesh to quickly find the loop index for the original normals dictionary
         normalLookUpTable = {}
         for vertexLoop in mesh.data.loops:
-            #Check if it hasn't been added already because the split mesh can have more loop indices than the unsplit mesh apparently?
-            if vertexLoop.vertex_index not in normalLookUpTable:
-                normalLookUpTable[vertexLoop.vertex_index] = vertexLoop.index
+            normalLookUpTable[vertexLoop.vertex_index] = vertexLoop.index
 
         for strip in stripsIDX:
             file.write(firstStripHeaderPart1 if firstStrip else secondStripHeaderPart1)
@@ -665,7 +672,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
                 
             file.write(normalIdentifier)
             for index in strip:
-                vertexNormal = Vector(originalMeshNormals[normalLookUpTable[index]] * 127) #Clamp(clip) just in case, sometimes goes over the limit of a byte
+                vertexNormal = Vector(originalMeshNormals[normalLookUpTable[index]] * 127)
                 file.write(struct.pack('bbb', int(vertexNormal.x), int(vertexNormal.z), int(vertexNormal.y)))
                 #ANIM NODE BONE 2
                 deform = bm.verts.layers.deform.active
