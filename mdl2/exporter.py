@@ -220,13 +220,27 @@ def ExportModel(self, context, filepath, exportAnimNodes):
         file.seek(meshDescLocation)
 
         for mesh in meshes:
-            textureNameOffsets.append(file.tell())
-            file.write(ctypes.c_int(0))
-            stripListOffsets.append(file.tell())
-            file.write(ctypes.c_int(0))
-                
-            file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
-            file.write(ctypes.c_int(0)) #Mesh Strip Count
+            meshData = mesh.data
+            #Don't use the materials assigned to nothing
+            usedMaterialIndices = {poly.material_index for poly in meshData.polygons}
+            if (len(usedMaterialIndices) > 0):
+                #Each material needs to be a separate mesh
+                for _ in usedMaterialIndices:
+                    textureNameOffsets.append(file.tell())
+                    file.write(ctypes.c_int(0))
+                    stripListOffsets.append(file.tell())
+                    file.write(ctypes.c_int(0))
+                        
+                    file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
+                    file.write(ctypes.c_int(0)) #Mesh Strip Count
+            else: #Could have used a goto but python doesn't have them :(
+                textureNameOffsets.append(file.tell())
+                file.write(ctypes.c_int(0))
+                stripListOffsets.append(file.tell())
+                file.write(ctypes.c_int(0))
+                        
+                file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
+                file.write(ctypes.c_int(0)) #Mesh Strip Count
 
     sceneTextureNameOffsets = []
     sceneStripListOffsets = []
@@ -238,13 +252,28 @@ def ExportModel(self, context, filepath, exportAnimNodes):
         file.write(ctypes.c_int(meshDescLocation))
         file.seek(meshDescLocation)
 
-        sceneTextureNameOffsets.append(file.tell())
-        file.write(ctypes.c_int(0))
-        sceneStripListOffsets.append(file.tell())
-        file.write(ctypes.c_int(0))
+        meshData = mesh.data
+        #Don't use the materials assigned to nothing
+        usedMaterialIndices = {poly.material_index for poly in meshData.polygons}
+        if (len(usedMaterialIndices) > 0):
+            #Each material needs to be a separate mesh
+            for _ in usedMaterialIndices:
+                sceneTextureNameOffsets.append(file.tell())
+                file.write(ctypes.c_int(0))
+                sceneStripListOffsets.append(file.tell())
+                file.write(ctypes.c_int(0))
+                    
+                file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
+                file.write(ctypes.c_int(0)) #Mesh Strip Count
+        else:
+            sceneTextureNameOffsets.append(file.tell())
+            file.write(ctypes.c_int(0))
+            sceneStripListOffsets.append(file.tell())
+            file.write(ctypes.c_int(0))
+                    
+            file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
+            file.write(ctypes.c_int(0)) #Mesh Strip Count
             
-        file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
-        file.write(ctypes.c_int(0)) #Mesh Strip Count
 
     meshDescriptorTime = time.time() - startTime
     startTime = time.time()
@@ -406,56 +435,81 @@ def ExportModel(self, context, filepath, exportAnimNodes):
 
     return {'FINISHED'}
 
+# Gets the used materials as a list instead of a set to be able to maintain the order
+def GetUsedMaterials(obj):
+    mesh = obj.data
+    usedMaterials = []
+
+    for poly in mesh.polygons:
+        matIndex = poly.material_index
+        if matIndex not in usedMaterials:  # Maintain order
+            usedMaterials.append(matIndex)
+
+    return usedMaterials
+
 def WriteStringList(file, meshes, textureNameOffsets, textureDict, meshIndex):
     dictionaryCount = 0
 
     for mesh in meshes:
-        if (mesh.MDLCollisions.CollisionTypes != 'None'):
-            collisionType = ''
-            collisionType = mesh.MDLCollisions.CollisionTypes
-            #Make sure custom collision isn't blank
-            if (mesh.MDLCollisions.CollisionTypes == 'Custom' and (mesh.MDLCollisions.CustomCollision != "")):
-                #Override it with the custom collision text box value if its custom
-                collisionType = mesh.MDLCollisions.CustomCollision
-                if (mesh.MDLCollisions.CustomCollision not in textureDict):
+        #Don't use the materials assigned to nothing
+        usedMaterialIndices = GetUsedMaterials(mesh)
+
+        materialSlot = 0
+        while True:
+            matIndex = usedMaterialIndices[materialSlot]
+
+            if (mesh.MDLCollisions.CollisionTypes != 'None'):
+                collisionType = ''
+                collisionType = mesh.MDLCollisions.CollisionTypes
+                #Make sure custom collision isn't blank
+                if (mesh.MDLCollisions.CollisionTypes == 'Custom' and (mesh.MDLCollisions.CustomCollision != "")):
+                    #Override it with the custom collision text box value if its custom
+                    collisionType = mesh.MDLCollisions.CustomCollision
+                    if (mesh.MDLCollisions.CustomCollision not in textureDict):
+                        textureDict[collisionType] = file.tell()
+                        file.write(bytes(collisionType, 'utf-8'))
+                        file.write(ctypes.c_byte(0)) #String terminator
+                        dictionaryCount += 1
+
+                elif (mesh.MDLCollisions.CollisionTypes not in textureDict):
                     textureDict[collisionType] = file.tell()
                     file.write(bytes(collisionType, 'utf-8'))
                     file.write(ctypes.c_byte(0)) #String terminator
                     dictionaryCount += 1
-
-            elif (mesh.MDLCollisions.CollisionTypes not in textureDict):
-                textureDict[collisionType] = file.tell()
-                file.write(bytes(collisionType, 'utf-8'))
-                file.write(ctypes.c_byte(0)) #String terminator
-                dictionaryCount += 1
-                
-            if (collisionType != 'Custom'):
-                #Update the offset
+                    
+                if (collisionType != 'Custom'):
+                    #Update the offset
+                    file.seek(textureNameOffsets[meshIndex])
+                    file.write(ctypes.c_int(textureDict[collisionType]))
+                    file.seek(0, 2) #Seek to the end of the file
+            elif (len(mesh.data.materials) > 0):
+                #Add it to the dictionary and write it to the file if its a new texture
+                if (mesh.data.materials[matIndex].name not in textureDict):
+                    textureDict[mesh.data.materials[matIndex].name] = file.tell()
+                    file.write(bytes(mesh.data.materials[matIndex].name, 'utf-8'))
+                    file.write(ctypes.c_byte(0)) #String terminator
+                    dictionaryCount += 1
+                    #Update the offset
                 file.seek(textureNameOffsets[meshIndex])
-                file.write(ctypes.c_int(textureDict[collisionType]))
+                file.write(ctypes.c_int(textureDict[mesh.data.materials[matIndex].name]))
                 file.seek(0, 2) #Seek to the end of the file
-        elif (len(mesh.data.materials) > 0):
-            #Add it to the dictionary and write it to the file if its a new texture
-            if (mesh.data.materials[0].name not in textureDict):
-                textureDict[mesh.data.materials[0].name] = file.tell()
-                file.write(bytes(mesh.data.materials[0].name, 'utf-8'))
-                file.write(ctypes.c_byte(0)) #String terminator
-                dictionaryCount += 1
-                #Update the offset
-            file.seek(textureNameOffsets[meshIndex])
-            file.write(ctypes.c_int(textureDict[mesh.data.materials[0].name]))
-            file.seek(0, 2) #Seek to the end of the file
-        else:
-            if ('NoMaterialPresent' not in textureDict):
-                textureDict['NoMaterialPresent'] = file.tell()
-                #Just write a empty string
-                file.write(ctypes.c_byte(0)) #String terminator
-                dictionaryCount += 1
-            file.seek(textureNameOffsets[meshIndex])
-            file.write(ctypes.c_int(textureDict['NoMaterialPresent']))
-            file.seek(0, 2) #Seek to the end of the file
+            else:
+                if ('NoMaterialPresent' not in textureDict):
+                    textureDict['NoMaterialPresent'] = file.tell()
+                    #Just write a empty string
+                    file.write(ctypes.c_byte(0)) #String terminator
+                    dictionaryCount += 1
+                file.seek(textureNameOffsets[meshIndex])
+                file.write(ctypes.c_int(textureDict['NoMaterialPresent']))
+                file.seek(0, 2) #Seek to the end of the file
 
-        meshIndex += 1
+            meshIndex += 1
+            materialSlot += 1
+
+            #To make sure it always does this atleast once
+            if len(usedMaterialIndices) <= materialSlot:
+                break
+
     return dictionaryCount, meshIndex 
 
 def WriteComponentDesc(meshes, file, exportAnimNodes):
@@ -463,11 +517,11 @@ def WriteComponentDesc(meshes, file, exportAnimNodes):
     #Component bounding box (seems unneeded but might as well include it just incase)
     bbox_corners = []
     #The origin for all the objects in the collection
-    allObjestOrigin = Vector([0,0,0]) 
+    allObjectOrigin = Vector([0,0,0]) 
     #Loop through all the meshes getting their bounding box corners
     for mesh in meshes:
         bbox_corners = bbox_corners + [mesh.matrix_world @ Vector(corner) for corner in mesh.bound_box]
-        allObjestOrigin += mesh.location
+        allObjectOrigin += mesh.location
     #Get the min and max values of all the bounding boxes for each axis
     x_min, y_min, z_min = np.array(bbox_corners).min(axis=0)
     boundingBoxMin = Vector([x_min, z_min, y_min]) * ModelScaleRatio #make sure to scale by 100 to get the right scale for the game and flip the y and z
@@ -479,8 +533,8 @@ def WriteComponentDesc(meshes, file, exportAnimNodes):
     file.write(struct.pack('ffff', length.x, length.y, length.z, 0.0)) #Bounding Box Length (Including the seemingly unused W value)
 
     #Get the center point
-    allObjestOrigin = (allObjestOrigin / len(meshes)) * ModelScaleRatio #multiply by 100 to get the right scale
-    file.write(struct.pack('ffff', allObjestOrigin.x, allObjestOrigin.z, allObjestOrigin.y, 0.0))
+    allObjectOrigin = (allObjectOrigin / len(meshes)) * ModelScaleRatio #multiply by 100 to get the right scale
+    file.write(struct.pack('ffff', allObjectOrigin.x, allObjectOrigin.z, allObjectOrigin.y, 0.0))
 
     componentNameOffset = file.tell()
     file.write(ctypes.c_int(0))
@@ -496,7 +550,20 @@ def WriteComponentDesc(meshes, file, exportAnimNodes):
         file.write(ctypes.c_int(0)) #Sub object type
     file.write(ctypes.c_short(0)) #Render thing?
 
-    file.write(ctypes.c_short(len(meshes))) #Mesh count
+    # For the unsplit meshes
+    materialCount = 0
+    for mesh in meshes:
+        meshData = mesh.data
+        #Don't use the materials assigned to nothing
+        usedMaterialIndices = {poly.material_index for poly in meshData.polygons}
+    
+        # Need to minus 1 because the mesh also gets counted and only need to add a extra mesh if the mesh has more than 1 material, 
+        # otherwise if there was 1 mesh with 1 material the count would be 2
+        validMaterialCount = len(usedMaterialIndices) - 1
+        if validMaterialCount > 0:
+            materialCount += validMaterialCount
+
+    file.write(ctypes.c_short(len(meshes) + materialCount)) #Mesh count
     MeshDescOffset = file.tell()
     file.write(ctypes.c_int(0))
         
@@ -627,9 +694,9 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
         #Using a dictionary only works because the mesh got split based on the UV island, 
         #meaning now every vertex is only assigned to one UV vertex
         UVCoordsDictionary = {}
-        faceIDX = []
+        materialsFaceIDX = {}
         for f in bm.faces:
-            faceIDX.append([v.index for v in f.verts])
+            materialsFaceIDX.setdefault(f.material_index, []).append([v.index for v in f.verts])
             #Index all the UVs for exporting
             for loop in f.loops:
                 VertexLoop.append(loop.vert.index)
@@ -637,83 +704,86 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
                 if (len(mesh.data.vertex_colors) > 0):
                     vertexColoursDict[loop.vert.index] = loop[vertexColourLayer]
 
-        sg = StripGenerater(faceIDX)
-        stripsIDX = sg.gen_strips()
+        for faceIDX in materialsFaceIDX.values():
+            sg = StripGenerater(faceIDX)
+            stripsIDX = sg.gen_strips()
 
-        stripLocation = file.tell()
-        file.seek(stripListOffsets[meshIndex])
-        file.write(ctypes.c_int(stripLocation)) #Strip offset
-        file.write(ctypes.c_int(0)) #Max offset?
-        file.write(ctypes.c_int(len(stripsIDX))) #Strip count
-        file.seek(stripLocation)
+            stripLocation = file.tell()
+            file.seek(stripListOffsets[meshIndex])
+            file.write(ctypes.c_int(stripLocation)) #Strip offset
+            file.write(ctypes.c_int(0)) #Max offset?
+            file.write(ctypes.c_int(len(stripsIDX))) #Strip count
+            file.seek(stripLocation)
 
-        firstStrip = True
-        bm.to_mesh(mesh.data)
-        mesh.data.update()
-        #Stop a error from happening when getting the vertex location
-        bm.verts.ensure_lookup_table()
+            firstStrip = True
+            bm.to_mesh(mesh.data)
+            mesh.data.update()
+            #Stop a error from happening when getting the vertex location
+            bm.verts.ensure_lookup_table()
 
-        #Make the look up table for the split mesh to quickly find the loop index for the original normals dictionary
-        normalLookUpTable = {}
-        for vertexLoop in mesh.data.loops:
-            normalLookUpTable[vertexLoop.vertex_index] = vertexLoop.index
+            #Make the look up table for the split mesh to quickly find the loop index for the original normals dictionary
+            normalLookUpTable = {}
+            for vertexLoop in mesh.data.loops:
+                normalLookUpTable[vertexLoop.vertex_index] = vertexLoop.index
 
-        for strip in stripsIDX:
-            file.write(firstStripHeaderPart1 if firstStrip else secondStripHeaderPart1)
-            file.write(ctypes.c_int(len(strip)))
-            file.write(stripHeaderPart2)
-            firstStrip= False
+            for strip in stripsIDX:
+                file.write(firstStripHeaderPart1 if firstStrip else secondStripHeaderPart1)
+                file.write(ctypes.c_int(len(strip)))
+                file.write(stripHeaderPart2)
+                firstStrip= False
 
-            file.write(vertexIdentifier)
-            for index in strip:
-                #Multiply by the world matrix to apply the transforms to the mesh
-                vertexPosition = (mesh.matrix_world @ bm.verts[index].co) * 100
-                file.write(struct.pack('fff', vertexPosition.x, vertexPosition.z, vertexPosition.y))
-                
-            file.write(normalIdentifier)
-            for index in strip:
-                vertexNormal = Vector(originalMeshNormals[normalLookUpTable[index]] * 127)
-                file.write(struct.pack('bbb', int(vertexNormal.x), int(vertexNormal.z), int(vertexNormal.y)))
-                #ANIM NODE BONE 2
-                deform = bm.verts.layers.deform.active
-                if ('Anim Nodes' in bpy.data.collections and len(bm.verts[index][deform]) > 1 and exportAnimNodes):
-                    group_name = obj.vertex_groups[obj.data.vertices[index].groups[1].group].name
-                    animNodes = list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY')  
-                    nodeIndex = next((i for i, node in enumerate(animNodes) if node.name.lower() == group_name.lower()), None)
-                    if nodeIndex == None:
-                        print('Node: ' + group_name + ' does not exist')
-                    file.write(ctypes.c_byte((nodeIndex + 1) * 2)) #Bone 2
+                file.write(vertexIdentifier)
+                for index in strip:
+                    #Multiply by the world matrix to apply the transforms to the mesh
+                    vertexPosition = (mesh.matrix_world @ bm.verts[index].co) * 100
+                    file.write(struct.pack('fff', vertexPosition.x, vertexPosition.z, vertexPosition.y))
+                    
+                file.write(normalIdentifier)
+                for index in strip:
+                    vertexNormal = Vector(originalMeshNormals[normalLookUpTable[index]] * 127)
+                    file.write(struct.pack('bbb', int(vertexNormal.x), int(vertexNormal.z), int(vertexNormal.y)))
+                    #ANIM NODE BONE 2
+                    deform = bm.verts.layers.deform.active
+                    if ('Anim Nodes' in bpy.data.collections and len(bm.verts[index][deform]) > 1 and exportAnimNodes):
+                        group_name = obj.vertex_groups[obj.data.vertices[index].groups[1].group].name
+                        animNodes = list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY')  
+                        nodeIndex = next((i for i, node in enumerate(animNodes) if node.name.lower() == group_name.lower()), None)
+                        if nodeIndex == None:
+                            print('Node: ' + group_name + ' does not exist')
+                        file.write(ctypes.c_byte((nodeIndex + 1) * 2)) #Bone 2
+                    else:
+                        file.write(ctypes.c_byte(0)) #Bone 2
+                    
+                file.write(uvIdentifier)
+                for index in strip:
+                    WriteUVs(UVCoordsDictionary[index], file, obj, index, exportAnimNodes)
+
+                file.write(colorIdentifier)
+                if (len(mesh.data.vertex_colors) > 0):
+                    for index in strip:
+                        colours = EncodeColour(Vector(vertexColoursDict[index]))
+                        file.write(struct.pack('BBBB', int(colours.x), int(colours.y), int(colours.z), int(colours.w)))
                 else:
-                    file.write(ctypes.c_byte(0)) #Bone 2
-                
-            file.write(uvIdentifier)
-            for index in strip:
-                WriteUVs(UVCoordsDictionary[index], file, obj, index, exportAnimNodes)
+                    for index in strip:
+                        #Make it all white and fully opaque if no vertex colours
+                        file.write(struct.pack('BBBB', 0x80, 0x80, 0x80, 0x80,))
 
-            file.write(colorIdentifier)
-            if (len(mesh.data.vertex_colors) > 0):
-                for index in strip:
-                    colours = EncodeColour(Vector(vertexColoursDict[index]))
-                    file.write(struct.pack('BBBB', int(colours.x), int(colours.y), int(colours.z), int(colours.w)))
+            meshIndex += 1
+            #Add the strip ending and pad it like is in Krome's MDLs
+            file.write(stripEnd)
+            rowPosition = file.tell() % 16 #0 when on a new row
+            if (rowPosition == 0):
+                file.write(stripLastRow)
             else:
-                for index in strip:
-                    #Make it all white and fully opaque if no vertex colours
-                    file.write(struct.pack('BBBB', 0x80, 0x80, 0x80, 0x80,))
+                file.write(bytes(16 - rowPosition)) #pad out the rest of the row like the MDLs do
+                file.write(stripLastRow)
+            
 
         bm.clear
         bm.free()
         originalMesh.to_mesh(mesh.data)
         originalMesh.clear
         originalMesh.free()
-        meshIndex += 1
-        #Add the strip ending and pad it like is in Krome's MDLs
-        file.write(stripEnd)
-        rowPosition = file.tell() % 16 #0 when on a new row
-        if (rowPosition == 0):
-            file.write(stripLastRow)
-        else:
-            file.write(bytes(16 - rowPosition)) #pad out the rest of the row like the MDLs do
-            file.write(stripLastRow)
     
     return meshIndex
 
