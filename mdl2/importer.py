@@ -521,6 +521,7 @@ class CreateBlenderMesh:
 
                 #Shade smooth if the option is checked
                 if (shadeSmooth):
+                    bpy.context.view_layer.objects.active = object
                     bpy.ops.object.shade_smooth()
                     
                 #Deselect all the objects when done
@@ -534,7 +535,7 @@ class CreateBlenderMesh:
             
 
 
-        #Bounding box, used for frustrum and oclusion culling (probably something different for levels) and collision for tilting platforms
+        #Bounding box, used for frustum and occlusion culling (probably something different for levels) and collision for tilting platforms
         if (importBoundingBox):
             BoundingBox = bpy.data.objects.new('Bounding Box', None)
             #Get the center of the bounding box
