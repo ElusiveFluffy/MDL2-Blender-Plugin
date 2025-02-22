@@ -15,6 +15,7 @@ from mathutils import Vector
 from pathlib import Path
 
 ModelScaleRatio = 100
+UVsTooBig = False
 
 class ExportMDL2(Operator, ExportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
@@ -41,6 +42,8 @@ class ExportMDL2(Operator, ExportHelper):
     
 
 def ExportModel(self, context, filepath, exportAnimNodes):
+    global UVsTooBig
+    UVsTooBig = False
 
     #Check if there is any meshes in the scene otherwise will get a error if there is none
     meshes = list(o for o in bpy.data.objects if o.type == 'MESH')
@@ -424,6 +427,9 @@ def ExportModel(self, context, filepath, exportAnimNodes):
 
     file.close
 
+    if (UVsTooBig):
+        self.report({'WARNING'}, 'UVs are too small/big in one or more of the meshes and got clamped, check the log for details on which meshes')
+
     print('Header Time (Sec): ', headerTime)
     print('Component Time (Sec): ', componentTime)
     print('Ref Points Time (Sec): ', refPointsTime)
@@ -799,7 +805,11 @@ def WriteUVs(UVCoords: Vector, file, obj, index, exportAnimNodes):
         UVCoordsCopy.y = 1 - UVCoordsCopy.y
                     
     UVCoordsCopy = UVCoordsCopy * 4096
-    file.write(struct.pack('hh', int(UVCoordsCopy.x), int(UVCoordsCopy.y)))
+    if (UVCoordsCopy.x > 32767 or UVCoordsCopy.x < -32768 or UVCoordsCopy.y > 32767 or UVCoordsCopy.y < -32768):
+        print("Warning UV coordinate too small/big in mesh, " + obj.name + ", clamping in the export")
+        global UVsTooBig
+        UVsTooBig = True
+    file.write(struct.pack('hh', int(np.clip(UVCoordsCopy.x, -32768, 32767)), int(np.clip(UVCoordsCopy.y, -32768, 32767))))
     #ANIM NODE BONE 1
     if ('Anim Nodes' in bpy.data.collections and exportAnimNodes):
         group_name = obj.vertex_groups[obj.data.vertices[index].groups[0].group].name
