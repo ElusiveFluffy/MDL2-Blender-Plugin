@@ -52,7 +52,7 @@ class ImportMDL2(Operator, ImportHelper):
     )
     MergeSubOjects: BoolProperty(
         name="Merge Sub Object Meshes",
-        description="Merges all meshes in a sub object into 1 mesh",
+        description="Merges all meshes in a sub object into 1 mesh \n(Won't merge collision meshes)",
         default=True,
     )
     ImportBoundingBox: BoolProperty(
@@ -484,8 +484,14 @@ class CreateBlenderMesh:
                             bone2_vertex_group = object.vertex_groups.new(name=bone2Name)
                         bone2_vertex_group.add([vert], bone2Weight, 'ADD')   
 
-                #Remove doubles later on after joining the sub object meshes, faster to do it then
-                if not mergeSubObjects:
+                #Check if the texture if for a collision type
+                collisionMat = False
+                if (MeshDescriptor.Descriptors[components][meshes].TextureName in enum_members_from_type(type(object.MDLCollisions), 'CollisionTypes')):
+                    object.MDLCollisions.CollisionTypes = MeshDescriptor.Descriptors[components][meshes].TextureName
+                    collisionMat = True
+                
+                #Remove doubles later on after joining the sub object meshes (if they're not a collision mesh), faster to do it then
+                if not mergeSubObjects or collisionMat:
                     bm = bmesh.new()
                     bm.from_mesh(mesh)
                     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005)
@@ -494,12 +500,6 @@ class CreateBlenderMesh:
                     bm.clear()
                     bm.free()
 
-                #Check if the texture if for a collision type
-                collisionMat = False
-                if (MeshDescriptor.Descriptors[components][meshes].TextureName in enum_members_from_type(type(object.MDLCollisions), 'CollisionTypes')):
-                    object.MDLCollisions.CollisionTypes = MeshDescriptor.Descriptors[components][meshes].TextureName
-                    collisionMat = True
-                
                 #Only make the material if its not a collision material
                 if (not collisionMat):
                     #Create and add the material
@@ -541,6 +541,10 @@ class CreateBlenderMesh:
                 #Get all the meshes in the sub object
                 meshCount = 0
                 for obj in modelCollection.objects:
+                    if obj.MDLCollisions.CollisionTypes != "None":
+                        #Still select them at the end
+                        objectsToSelect.append(obj)
+                        continue
                     meshCount += 1
                     #So the name isn't something like ___.001
                     if meshCount == 1:
