@@ -50,6 +50,11 @@ class ImportMDL2(Operator, ImportHelper):
         description="Apply smooth shading to the imported mesh",
         default=True,
     )
+    MergeSubOjects: BoolProperty(
+        name="Merge Sub Object Meshes",
+        description="Merges all meshes in a sub object into 1 mesh",
+        default=True,
+    )
     ImportBoundingBox: BoolProperty(
         name="Import Bounding Box",
         description="Import the bounding box from the MDL data, some models use the bounding box for collision (mainly just the tilting platforms)",
@@ -69,10 +74,10 @@ class ImportMDL2(Operator, ImportHelper):
     )
 
     def execute(self, context):
-        return CreateModel(self, context, self.filepath, self.SmoothShading, self.ImportBoundingBox, self.ImportAnimNodes, self.OriginEnum)
+        return CreateModel(self, context, self.filepath, self.SmoothShading, self.MergeSubOjects, self.ImportBoundingBox, self.ImportAnimNodes, self.OriginEnum)
 
     
-def CreateModel(self, context, filepath, smoothShading, importBoundingBox, importAnimNodes, originEnum):
+def CreateModel(self, context, filepath, smoothShading, mergeSubObjects, importBoundingBox, importAnimNodes, originEnum):
 
     self.report({'INFO'}, 'Start Reading MDL')
     file = open(filepath, "rb")
@@ -103,7 +108,7 @@ def CreateModel(self, context, filepath, smoothShading, importBoundingBox, impor
 
     file.close()
     
-    CreateBlenderMesh.Create(smoothShading, importBoundingBox, importAnimNodes, originEnum)
+    CreateBlenderMesh.Create(smoothShading, mergeSubObjects, importBoundingBox, importAnimNodes, originEnum)
 
     #Add a undo/redo restore point
     #Makes it so undo doesn't act weirdly sometimes, and fixes the crash when trying to undo the import right after importing it
@@ -399,7 +404,7 @@ class Strips:
         print('Colour Time (Sec): ' + str(colourTime))
         print('UV Time (Sec): ' + str(UVTime))
         print('Face Time (Sec): ' + str(faceTime))
-        print('Total Time (Sec): ' + str(vertexTime + normalTime + colourTime + UVTime + faceTime))
+        print('Gather Values Total Time (Sec): ' + str(vertexTime + normalTime + colourTime + UVTime + faceTime))
 
     def ComputedNormal(vertexPos1: Vector, vertexPos2: Vector, vertexPos3: Vector):
         return ((vertexPos2 - vertexPos1).cross(vertexPos3 - vertexPos1)).normalized()
@@ -419,7 +424,7 @@ class Strips:
 
 class CreateBlenderMesh:
 
-    def Create(shadeSmooth: bool, importBoundingBox: bool, importAnimNodes: bool, originEnum: EnumProperty):
+    def Create(shadeSmooth: bool, mergeSubObjects: bool, importBoundingBox: bool, importAnimNodes: bool, originEnum: EnumProperty):
         startTime = time.time()
         #Make sure something is a active object otherwise will get a error
         if bpy.context.active_object != None:
@@ -479,13 +484,15 @@ class CreateBlenderMesh:
                             bone2_vertex_group = object.vertex_groups.new(name=bone2Name)
                         bone2_vertex_group.add([vert], bone2Weight, 'ADD')   
 
-                bm = bmesh.new()
-                bm.from_mesh(mesh)
-                bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005)
-                bm.to_mesh(mesh)
-                mesh.update()
-                bm.clear()
-                bm.free()
+                #Remove doubles later on after joining the sub object meshes, faster to do it then
+                if not mergeSubObjects:
+                    bm = bmesh.new()
+                    bm.from_mesh(mesh)
+                    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005)
+                    bm.to_mesh(mesh)
+                    mesh.update()
+                    bm.clear()
+                    bm.free()
 
                 #Check if the texture if for a collision type
                 collisionMat = False
@@ -527,7 +534,35 @@ class CreateBlenderMesh:
                 #Deselect all the objects when done
                 bpy.ops.object.select_all(action='DESELECT')
 
-                objectsToSelect.append(object)
+                if not mergeSubObjects:
+                    objectsToSelect.append(object)
+            
+            if mergeSubObjects:
+                #Get all the meshes in the sub object
+                meshCount = 0
+                for obj in modelCollection.objects:
+                    meshCount += 1
+                    #So the name isn't something like ___.001
+                    if meshCount == 1:
+                        bpy.context.view_layer.objects.active = obj
+                    obj.select_set(True)
+                
+                #While it is fine to call join with only 1 mesh, it does give a warning though
+                if meshCount > 1:
+                    bpy.ops.object.join()
+
+                mesh = bpy.context.view_layer.objects.active.data
+                bm = bmesh.new()
+                bm.from_mesh(mesh)
+                bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005)
+                bm.to_mesh(mesh)
+                mesh.update()
+                bm.clear()
+                bm.free()
+                
+                objectsToSelect.append(bpy.context.view_layer.objects.active)
+
+                bpy.ops.object.select_all(action='DESELECT')
             
         for obj in objectsToSelect:
             obj.select_set(True)
@@ -618,9 +653,9 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
         file = open(path.join("./", texturePath, textureName + '.dds'), "rb")
         file.seek(84)
         format = file.read(4)
-        print('DDS DXT format:', format)
+        #print('DDS DXT format:', format)
         textureHasAlpha = format == b'DXT5'
-        print(textureHasAlpha)
+        #print(textureHasAlpha)
         file.close()
 
     else:
