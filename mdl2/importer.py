@@ -649,7 +649,6 @@ def GetMaterial(texturePath, textureName, transparentVertexColour):
     colourMultiply.blend_type = 'MULTIPLY'
     colourMultiply.inputs['Fac'].default_value = 1.0
     vertexColour = material.node_tree.nodes.new('ShaderNodeVertexColor')
-    vertexColour.layer_name = 'Colour'
 
     textureHasAlpha = False
     if (textureFound):
