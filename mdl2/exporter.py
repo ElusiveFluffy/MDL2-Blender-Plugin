@@ -63,9 +63,11 @@ def ExportModel(self, context, filepath, exportAnimNodes):
 
     #MDL Header
     file.write(bytearray("MDL2", 'utf-8'))
+    #Matrix count
     if ('Anim Nodes' in bpy.data.collections):
         file.write(ctypes.c_short(len(list(o for o in bpy.data.collections['Anim Nodes'].all_objects if o.type == 'EMPTY')) + 1))
     else:
+        #Will come back to this later if there is any fragment sub objects
         file.write(ctypes.c_short(1))
     #Check that the collection has a mesh in it
     validCollectionCount = 0
@@ -153,13 +155,18 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     #Collections that have at least 1 mesh in them
     vaildCollections = []
 
+    fragmentCount = 0
     for collection in bpy.data.collections:
+        isFragment = False
+        if collection.name.startswith(("F_", "f_")):
+            isFragment = True
+            fragmentCount += 1
         #Get all the meshes in the collection
         meshes = list(o for o in collection.all_objects if o.type == 'MESH')
         #If theres no meshes don't add it
         if (len(meshes) > 0):
             vaildCollections.append(collection)
-            offsets = WriteComponentDesc(meshes, file, exportAnimNodes)
+            offsets = WriteComponentDesc(meshes, file, exportAnimNodes, isFragment, fragmentCount)
             componentNameOffsets.append(offsets[0])
             parentedBoneOffsets.append(offsets[1])
             meshDescOffsets.append(offsets[2])
@@ -332,6 +339,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     textureDict = {}
     dictionaryCount = 0
     noAnimIDsOffset = 0
+    animIDCount = 0
 
     componentNameLocation = file.tell()
     file.seek(dictionaryOffset)
@@ -352,13 +360,26 @@ def ExportModel(self, context, filepath, exportAnimNodes):
         dictionaryCount += 1
 
         #Anim ID Stuff
-        if (noAnimIDsOffset == 0):
+        if (collection.name.startswith(("F_", "f_"))): #Fragment
+            animIDOffset = file.tell()
+            #Always have at least 2 digits, just for consistency with the MDLs from the game
+            file.write(bytes("/anim=" + str(animIDCount).zfill(2), 'utf-8'))
+            file.write(ctypes.c_byte(0)) #String terminator
+            animIDCount += 1
+            dictionaryCount += 1
+            file.seek(parentedBoneOffsets[index])
+            file.write(ctypes.c_int(animIDOffset))
+        elif (noAnimIDsOffset == 0):
             noAnimIDsOffset = file.tell()
             #Just write a empty string
             file.write(ctypes.c_byte(0)) #String terminator
             dictionaryCount += 1
-        file.seek(parentedBoneOffsets[index])
-        file.write(ctypes.c_int(noAnimIDsOffset))
+            file.seek(parentedBoneOffsets[index])
+            file.write(ctypes.c_int(noAnimIDsOffset))
+        else:
+            file.seek(parentedBoneOffsets[index])
+            file.write(ctypes.c_int(noAnimIDsOffset))
+
         file.seek(0, 2) #Seek to the end of the file
 
         #Mesh textures
@@ -422,6 +443,11 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     #Doesn't seem to be needed just adding it though just in case
     #Also don't need to add it to the dictionary count and doesn't need a string terminator
     file.write(bytes('end', 'utf-8'))
+
+    #Update the matrix count
+    if fragmentCount != 0:
+        file.seek(4)
+        file.write(ctypes.c_short(fragmentCount + 1)) #Each fragment has a unique ID, and every other mesh has 1
 
     stringListTime = time.time() - startTime
 
@@ -518,7 +544,7 @@ def WriteStringList(file, meshes, textureNameOffsets, textureDict, meshIndex):
 
     return dictionaryCount, meshIndex 
 
-def WriteComponentDesc(meshes, file, exportAnimNodes):
+def WriteComponentDesc(meshes, file, exportAnimNodes, isFragment, fragmentCount):
 
     #Component bounding box (seems unneeded but might as well include it just incase)
     bbox_corners = []
@@ -554,7 +580,11 @@ def WriteComponentDesc(meshes, file, exportAnimNodes):
         file.write(ctypes.c_int(2)) #Sub object type
     else:
         file.write(ctypes.c_int(0)) #Sub object type
-    file.write(ctypes.c_short(0)) #Render thing?
+    
+    if (isFragment): #Object ID, each fragment needs a unique ID above 0
+        file.write(ctypes.c_short(fragmentCount))
+    else:
+        file.write(ctypes.c_short(0))
 
     # For the unsplit meshes
     materialCount = 0
