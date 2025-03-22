@@ -555,18 +555,19 @@ class CreateBlenderMesh:
                 if meshCount > 1:
                     bpy.ops.object.join()
 
-                mesh = bpy.context.view_layer.objects.active.data
-                bm = bmesh.new()
-                bm.from_mesh(mesh)
-                bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005)
-                bm.to_mesh(mesh)
-                mesh.update()
-                bm.clear()
-                bm.free()
-                
-                objectsToSelect.append(bpy.context.view_layer.objects.active)
+                if meshCount != 0:
+                    mesh = bpy.context.view_layer.objects.active.data
+                    bm = bmesh.new()
+                    bm.from_mesh(mesh)
+                    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.005)
+                    bm.to_mesh(mesh)
+                    mesh.update()
+                    bm.clear()
+                    bm.free()
+                    
+                    objectsToSelect.append(bpy.context.view_layer.objects.active)
 
-                bpy.ops.object.select_all(action='DESELECT')
+                    bpy.ops.object.select_all(action='DESELECT')
             
         for obj in objectsToSelect:
             obj.select_set(True)
