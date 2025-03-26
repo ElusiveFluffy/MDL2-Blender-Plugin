@@ -129,7 +129,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
 
     file.write(struct.pack('BBBBI', 0, 0, 0, 0, 0)) #Unknown values
 
-    file.write(ctypes.c_uint(int(time.time()))) #Creation Data
+    file.write(ctypes.c_uint(int(time.time()))) #Creation Date
 
     originalFileNameOffset = file.tell()
     file.write(ctypes.c_int(0))
@@ -154,6 +154,17 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     meshDescOffsets = []
     #Collections that have at least 1 mesh in them
     vaildCollections = []
+
+    originalSelectedObjects = bpy.context.selected_objects
+    originalActiveObject = bpy.context.view_layer.objects.active
+    #If no object is the active object than this will have a error
+    if (originalActiveObject != None):
+        originalMode = bpy.context.object.mode
+        
+    #Make sure something is a active object otherwise will get a error
+    if (bpy.context.active_object != None):
+        #Switching to object mode to update the material slots if any were added in edit mode
+        bpy.ops.object.mode_set(mode = 'OBJECT')
 
     fragmentCount = 0
     for collection in bpy.data.collections:
@@ -291,13 +302,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     ##-----------------------------------------------------------
 
     meshIndex = 0
-    #Strips
-    originalSelectedObjects = bpy.context.selected_objects
-    originalActiveObject = bpy.context.view_layer.objects.active
-    #If no object is the active object than this will have a error
-    if (originalActiveObject != None):
-        originalMode = bpy.context.object.mode
-    
+    #Strips    
     for index, collection in enumerate(vaildCollections):
         meshes = list(o for o in collection.all_objects if o.type == 'MESH')
 
@@ -634,12 +639,7 @@ def WriteStrips(meshes: Object, file, stripListOffsets, meshIndex, exportAnimNod
     contextOverride["region"] = screenArea.regions[-1]
     
     mesh: Object
-    for mesh in meshes:
-        #Make sure something is a active object otherwise will get a error
-        if (bpy.context.active_object != None):
-            #Make sure to be in object mode to avoid the deselect error
-            bpy.ops.object.mode_set(mode = 'OBJECT')
-        
+    for mesh in meshes:        
         originalMesh = bmesh.new()
         originalMesh.from_mesh(mesh.data)
 
