@@ -31,6 +31,12 @@ class ExportMDL2(Operator, ExportHelper):
         maxlen=255,  # Max internal buffer length, longer would be clamped.
     )
 
+    BatchExport: BoolProperty(
+        name="Batch Export",
+        description="Each root collection in the scene will be exported as an MDL, any meshes inside of a collection, in a MDL collection, will be exported for that specific MDL only.\nThe file name input doesn't matter, the MDL collection names will be used instead as the file names (with .mdl added to the end)",
+        default=False,
+    )
+
     ExportAnimNodes: BoolProperty(
         name="Export Anim Nodes",
         description="Exports the animation nodes and skinning data for animated models.",
@@ -38,10 +44,10 @@ class ExportMDL2(Operator, ExportHelper):
     )
 
     def execute(self, context):
-        return ExportModel(self, context, self.filepath, self.ExportAnimNodes)
+        return ExportModel(self, context, self.filepath, self.BatchExport, self.ExportAnimNodes)
     
 
-def ExportModel(self, context, filepath, exportAnimNodes):
+def ExportModel(self, context, filepath, batchExport, exportAnimNodes):
     global UVsTooBig
     UVsTooBig = False
 
@@ -50,6 +56,24 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     if (len(meshes) == 0):
         self.report({'ERROR'}, 'No Meshes in the Scene')
         return {'CANCELLED'}
+
+    if batchExport:
+        for mdl in bpy.context.scene.collection.children:
+            #Change the MDL name to be the root collection name
+            filepath = Path(filepath).parent / (mdl.name + ".mdl")
+            WriteMDL(filepath, mdl, exportAnimNodes)
+    else:
+        WriteMDL(filepath, bpy.context.scene.collection, exportAnimNodes)
+
+    if (UVsTooBig):
+        self.report({'WARNING'}, 'UVs are too small/big in one or more of the meshes and got clamped, check the log for details on which meshes')
+
+    return {'FINISHED'}
+
+def WriteMDL(filepath, mdlCollection, exportAnimNodes):
+    #If there is no meshes in any of the MDL collections just return instantly
+    if len(list(o for o in mdlCollection.all_objects if o.type == 'MESH')) == 0:
+        return
 
     file = open(filepath, 'wb')
 
@@ -71,15 +95,22 @@ def ExportModel(self, context, filepath, exportAnimNodes):
         file.write(ctypes.c_short(1))
     #Check that the collection has a mesh in it
     validCollectionCount = 0
-    for collection in bpy.data.collections:
+    for collection in mdlCollection.children:
         meshes = list(o for o in collection.all_objects if o.type == 'MESH')
         if (len(meshes) > 0):
             validCollectionCount += 1
-    file.write(ctypes.c_short(validCollectionCount + len(list(o for o in bpy.data.scenes['Scene'].collection.all_objects if o.type == 'MESH' and o.users_collection[0] == bpy.data.scenes['Scene'].collection)))) #Component Count
+    file.write(ctypes.c_short(validCollectionCount + len(list(o for o in mdlCollection.all_objects if o.type == 'MESH' and o.users_collection[0] == mdlCollection)))) #Sub Object Count
     
     #Ref Points
-    if ('Ref Points' in bpy.data.collections):
-        file.write(ctypes.c_short(len(list(o for o in bpy.data.collections['Ref Points'].all_objects if o.type == 'EMPTY'))))
+    refPointCollection = None
+    for c in mdlCollection.children:
+        #Just use the first one found, since there should only be 1
+        if c.name.startswith('Ref Points'):
+            refPointCollection = c
+            break
+    
+    if (refPointCollection != None):
+        file.write(ctypes.c_short(len(list(o for o in refPointCollection.all_objects if o.type == 'EMPTY'))))
     else:
         file.write(ctypes.c_short(0))
 
@@ -167,7 +198,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
         bpy.ops.object.mode_set(mode = 'OBJECT')
 
     fragmentCount = 0
-    for collection in bpy.data.collections:
+    for collection in mdlCollection.children:
         isFragment = False
         if collection.name.startswith(("F_", "f_")):
             isFragment = True
@@ -182,13 +213,13 @@ def ExportModel(self, context, filepath, exportAnimNodes):
             parentedBoneOffsets.append(offsets[1])
             meshDescOffsets.append(offsets[2])
 
-    #Meshes that are not in any collection, only in the scene collection
-    sceneMeshes = list(o for o in bpy.data.scenes['Scene'].collection.all_objects if o.type == 'MESH' and o.users_collection[0] == bpy.data.scenes['Scene'].collection)
+    #Meshes that are not in any collection, only in the scene collection, or not in any sub object in a batch mdl collection
+    sceneMeshes = list(o for o in mdlCollection.all_objects if o.type == 'MESH' and o.users_collection[0] == mdlCollection)
     sceneComponentNameOffsets = []
     sceneParentedBoneOffsets = []
     sceneMeshDescOffsets = []
     for mesh in sceneMeshes:
-        offsets = WriteComponentDesc([mesh], file, exportAnimNodes) #make it a list so its iterable so I don't have to have a check with the for loop
+        offsets = WriteComponentDesc([mesh], file, exportAnimNodes, False, 0) #make it a list so its iterable so I don't have to have a check with the for loop
         sceneComponentNameOffsets.append(offsets[0])
         sceneParentedBoneOffsets.append(offsets[1])
         sceneMeshDescOffsets.append(offsets[2])
@@ -201,8 +232,8 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     #RefPoints
     refPointNameOffsets = []
 
-    if ('Ref Points' in bpy.data.collections):
-        refPoints = list(o for o in bpy.data.collections['Ref Points'].all_objects if o.type == 'EMPTY')
+    if (refPointCollection != None):
+        refPoints = list(o for o in refPointCollection.all_objects if o.type == 'EMPTY')
 
         #Add the ref points offset
         refPointLocation = file.tell()
@@ -234,7 +265,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
 
     for index, collection in enumerate(vaildCollections):
         meshes = list(o for o in collection.all_objects if o.type == 'MESH')
-            
+        
         meshDescLocation = file.tell()
         file.seek(meshDescOffsets[index])
         file.write(ctypes.c_int(meshDescLocation))
@@ -251,7 +282,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
                     file.write(ctypes.c_int(0))
                     stripListOffsets.append(file.tell())
                     file.write(ctypes.c_int(0))
-                        
+                    
                     file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
                     file.write(ctypes.c_int(0)) #Mesh Strip Count
             else: #Could have used a goto but python doesn't have them :(
@@ -259,7 +290,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
                 file.write(ctypes.c_int(0))
                 stripListOffsets.append(file.tell())
                 file.write(ctypes.c_int(0))
-                        
+                
                 file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
                 file.write(ctypes.c_int(0)) #Mesh Strip Count
 
@@ -283,7 +314,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
                 file.write(ctypes.c_int(0))
                 sceneStripListOffsets.append(file.tell())
                 file.write(ctypes.c_int(0))
-                    
+                
                 file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
                 file.write(ctypes.c_int(0)) #Mesh Strip Count
         else:
@@ -291,7 +322,7 @@ def ExportModel(self, context, filepath, exportAnimNodes):
             file.write(ctypes.c_int(0))
             sceneStripListOffsets.append(file.tell())
             file.write(ctypes.c_int(0))
-                    
+            
             file.write(ctypes.c_int(0)) #Max Offset? Seemingly Unused
             file.write(ctypes.c_int(0)) #Mesh Strip Count
             
@@ -427,9 +458,9 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     file.write(ctypes.c_byte(0)) #String terminator
     dictionaryCount += 1
     
-    #RefPoints
-    if ('Ref Points' in bpy.data.collections):
-        refPoints = list(o for o in bpy.data.collections['Ref Points'].all_objects if o.type == 'EMPTY')
+    #Ref Points
+    if (refPointCollection != None):
+        refPoints = list(o for o in refPointCollection.all_objects if o.type == 'EMPTY')
 
         #Add all the data for the ref points
         for index, point in enumerate(refPoints):
@@ -457,20 +488,16 @@ def ExportModel(self, context, filepath, exportAnimNodes):
     stringListTime = time.time() - startTime
 
     file.close
-
-    if (UVsTooBig):
-        self.report({'WARNING'}, 'UVs are too small/big in one or more of the meshes and got clamped, check the log for details on which meshes')
-
-    print('Header Time (Sec): ', headerTime)
-    print('Component Time (Sec): ', componentTime)
-    print('Ref Points Time (Sec): ', refPointsTime)
-    print('Mesh Descriptor Time (Sec): ', meshDescriptorTime)
-    print('Strip Gen Time (Sec): ', stripTime)
-    print('String List Time (Sec): ', stringListTime)
-    print('Total Time (Sec): ', (headerTime + componentTime + refPointsTime + meshDescriptorTime + stripTime + stringListTime))
+    
+    print('MDL:', Path(filepath).name)
+    print('Header Time (Sec):', headerTime)
+    print('Sub Object Descriptor Time (Sec):', componentTime)
+    print('Ref Points Time (Sec):', refPointsTime)
+    print('Mesh Descriptor Time (Sec):', meshDescriptorTime)
+    print('Strip Gen Time (Sec):', stripTime)
+    print('String List Time (Sec):', stringListTime)
+    print('Total Time (Sec):', (headerTime + componentTime + refPointsTime + meshDescriptorTime + stripTime + stringListTime))
     print('')#Padding Line to separate different imports or exports
-
-    return {'FINISHED'}
 
 # Gets the used materials as a list instead of a set to be able to maintain the order
 def GetUsedMaterials(obj):

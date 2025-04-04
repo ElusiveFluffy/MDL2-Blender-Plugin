@@ -65,6 +65,11 @@ class ImportMDL2(Operator, ImportHelper):
         description="Imports the animation nodes from animated models and stores skinning data in vertex groups.",
         default=False,
     )
+    ImportToMDLCollection: BoolProperty(
+        name="Import to MDL Collection",
+        description="Imports all the MDL Sub Objects into a collection with the same name as the MDL. Intended for use with the batch MDL export option",
+        default=False,
+    )
     OriginEnum: EnumProperty(
         name='Origin Position',
         description='Which origin to use',
@@ -74,10 +79,10 @@ class ImportMDL2(Operator, ImportHelper):
     )
 
     def execute(self, context):
-        return CreateModel(self, context, self.filepath, self.SmoothShading, self.MergeSubOjects, self.ImportBoundingBox, self.ImportAnimNodes, self.OriginEnum)
+        return CreateModel(self, context, self.filepath, self.SmoothShading, self.MergeSubOjects, self.ImportBoundingBox, self.ImportAnimNodes, self.ImportToMDLCollection, self.OriginEnum)
 
     
-def CreateModel(self, context, filepath, smoothShading, mergeSubObjects, importBoundingBox, importAnimNodes, originEnum):
+def CreateModel(self, context, filepath, smoothShading, mergeSubObjects, importBoundingBox, importAnimNodes, importToMDLCollection, originEnum):
 
     self.report({'INFO'}, 'Start Reading MDL')
     file = open(filepath, "rb")
@@ -92,6 +97,8 @@ def CreateModel(self, context, filepath, smoothShading, mergeSubObjects, importB
         importAnimNodes = False
     global FilePath
     FilePath = filepath
+
+    print("MDL:", Path(filepath).name)
 
     ImportTextureAlias()
     MDLHeader.GatherValues(file)
@@ -108,7 +115,7 @@ def CreateModel(self, context, filepath, smoothShading, mergeSubObjects, importB
 
     file.close()
     
-    CreateBlenderMesh.Create(smoothShading, mergeSubObjects, importBoundingBox, importAnimNodes, originEnum)
+    CreateBlenderMesh.Create(smoothShading, mergeSubObjects, importBoundingBox, importAnimNodes, importToMDLCollection, Path(filepath).stem, originEnum)
 
     #Add a undo/redo restore point
     #Makes it so undo doesn't act weirdly sometimes, and fixes the crash when trying to undo the import right after importing it
@@ -399,12 +406,12 @@ class Strips:
 
             Strips.Objects.append(meshes)
 
-        print('Vertex Time (Sec): ' + str(vertexTime))
-        print('Normal Time (Sec): ' + str(normalTime))
-        print('Colour Time (Sec): ' + str(colourTime))
-        print('UV Time (Sec): ' + str(UVTime))
-        print('Face Time (Sec): ' + str(faceTime))
-        print('Gather Values Total Time (Sec): ' + str(vertexTime + normalTime + colourTime + UVTime + faceTime))
+        print('Vertex Time (Sec):', vertexTime)
+        print('Normal Time (Sec):', normalTime)
+        print('Colour Time (Sec):', colourTime)
+        print('UV Time (Sec):', UVTime)
+        print('Face Time (Sec):', faceTime)
+        print('Gather Values Total Time (Sec):', (vertexTime + normalTime + colourTime + UVTime + faceTime))
 
     def ComputedNormal(vertexPos1: Vector, vertexPos2: Vector, vertexPos3: Vector):
         return ((vertexPos2 - vertexPos1).cross(vertexPos3 - vertexPos1)).normalized()
@@ -424,7 +431,7 @@ class Strips:
 
 class CreateBlenderMesh:
 
-    def Create(shadeSmooth: bool, mergeSubObjects: bool, importBoundingBox: bool, importAnimNodes: bool, originEnum: EnumProperty):
+    def Create(shadeSmooth: bool, mergeSubObjects: bool, importBoundingBox: bool, importAnimNodes: bool, importToMDLCollection: bool, mdlName: str, originEnum: EnumProperty):
         startTime = time.time()
         #Make sure something is a active object otherwise will get a error
         if bpy.context.active_object != None:
@@ -447,9 +454,16 @@ class CreateBlenderMesh:
                 nodesCollection.objects.link(empty)
 
         objectsToSelect = []
+
+        if importToMDLCollection:
+            mdlCollection = bpy.data.collections.new(mdlName)
+            bpy.context.scene.collection.children.link(mdlCollection)
+        else:
+            mdlCollection = bpy.context.scene.collection
+
         for components in range(MDLHeader.ComponentCount):
             modelCollection = bpy.data.collections.new(ComponentDescriptor.Descriptors[components].ComponentName)
-            bpy.context.scene.collection.children.link(modelCollection)
+            mdlCollection.children.link(modelCollection)
             for meshes in range(ComponentDescriptor.Descriptors[components].MeshCount):
                 #Mesh
                 mesh = bpy.data.meshes.new(ComponentDescriptor.Descriptors[components].ComponentName)
@@ -589,10 +603,10 @@ class CreateBlenderMesh:
 
 
         if (MDLHeader.RefPointCount > 0):
-            #Create the collection for the ref points, check if the collection already exists for easier exporting
-            if ('Ref Points' not in bpy.data.collections):
+            #Create the collection for the ref points, check if the collection already exists for easier exporting, unless its being imported into a MDL collection
+            if ('Ref Points' not in bpy.data.collections or importToMDLCollection):
                 refCollection = bpy.data.collections.new('Ref Points')
-                bpy.context.scene.collection.children.link(refCollection)
+                mdlCollection.children.link(refCollection)
             else:
                 refCollection = bpy.data.collections['Ref Points']
 
@@ -607,7 +621,7 @@ class CreateBlenderMesh:
                 empty.empty_display_size = refPoint.Position.w if refPoint.Position.w > 0.05 else 0.05
                 empty.empty_display_type = 'SPHERE'
 
-        print('Create Mesh Time (Sec): ' + str(time.time() - startTime))
+        print('Create Mesh Time (Sec):', (time.time() - startTime))
         print('')#Padding Line to separate different imports or exports
 
 def enum_members_from_type(rna_type, prop_str):
